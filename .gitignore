@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors / IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project backups
+*.bak
+
+# Local secrets / environment
+.env
+.env.*
+!.env.example
+
+# Local cache
+.cache/
+
+# All local backup files
+*.bak*
+
+# All local backup files
+*.bak*
