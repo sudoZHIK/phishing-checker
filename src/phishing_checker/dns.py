@@ -13,6 +13,11 @@ from typing import Any
 import requests
 
 from .analyzer import normalize_url
+from .cache import get as cache_get
+from .cache import put as cache_put
+from .network_guard import respect_retry_after, wait_for_request
+
+DNS_CACHE_TTL = 300.0
 
 DEFAULT_DOH_SERVERS = (
     "https://cloudflare-dns.com/dns-query",
@@ -84,6 +89,7 @@ def _query_doh(
     timeout: float,
 ) -> DNSResult:
     """Perform one DNS-over-HTTPS JSON query."""
+    wait_for_request(hostname)
     try:
         response = requests.get(
             server,
@@ -97,6 +103,15 @@ def _query_doh(
             timeout=timeout,
             allow_redirects=False,
         )
+        if response.status_code == 429:
+            respect_retry_after(response.headers.get("Retry-After"))
+            return DNSResult(
+                record_type=record_type,
+                answers=(),
+                success=False,
+                error="DNS-over-HTTPS returned 429 Too Many Requests",
+                server=server,
+            )
         response.raise_for_status()
     except requests.RequestException as exc:
         return DNSResult(
@@ -190,6 +205,10 @@ def lookup_dns(
     results: list[DNSResult] = []
 
     for record_type in requested:
+        cached = cache_get("dns", f"{normalized.hostname_ascii}:{record_type}")
+        if cached:
+            results.append(DNSResult(**cached))
+            continue
         result: DNSResult | None = None
 
         for server in servers:
@@ -213,6 +232,19 @@ def lookup_dns(
             )
 
         results.append(result)
+        if result.success:
+            cache_put(
+                "dns",
+                f"{normalized.hostname_ascii}:{record_type}",
+                {
+                    "record_type": result.record_type,
+                    "answers": list(result.answers),
+                    "success": result.success,
+                    "error": result.error,
+                    "server": result.server,
+                },
+                DNS_CACHE_TTL,
+            )
 
     return DNSReport(
         hostname=normalized.hostname_unicode,

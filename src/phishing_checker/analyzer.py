@@ -10,11 +10,13 @@ from __future__ import annotations
 import ipaddress
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import idna
 
 from .models import Evidence
+from .scoring import WEIGHT_BRAND_SIMILARITY
 
 SUPPORTED_SCHEMES = frozenset({"http", "https"})
 
@@ -24,6 +26,21 @@ CREDENTIAL_PATH_RE = re.compile(
     r"support|billing)(?:/|$)",
     re.IGNORECASE,
 )
+
+BRAND_DOMAINS = {
+    "paypal": {"paypal.com"},
+    "microsoft": {"microsoft.com", "live.com", "outlook.com"},
+    "google": {"google.com"},
+    "apple": {"apple.com"},
+    "amazon": {"amazon.com"},
+    "facebook": {"facebook.com", "fb.com"},
+    "instagram": {"instagram.com"},
+    "netflix": {"netflix.com"},
+    "steam": {"steampowered.com", "steamcommunity.com"},
+    "binance": {"binance.com"},
+}
+
+BRAND_SIMILARITY_THRESHOLD = 0.78
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +236,10 @@ def analyze_url(url: str) -> tuple[NormalizedURL, list[Evidence]]:
     result = normalize_url(url)
     evidence: list[Evidence] = []
 
+    brand_evidence = _brand_similarity(result.hostname_ascii)
+    if brand_evidence is not None:
+        evidence.append(brand_evidence)
+
     if result.has_userinfo:
         evidence.append(
             Evidence(
@@ -319,27 +340,93 @@ def analyze_url(url: str) -> tuple[NormalizedURL, list[Evidence]]:
     return result, evidence
 
 
+
+def _brand_similarity(hostname: str) -> Evidence | None:
+    """Detect hostnames that closely imitate known brands."""
+    hostname = hostname.lower().rstrip(".")
+
+    # Official domains and their subdomains are legitimate.
+    for official_domains in BRAND_DOMAINS.values():
+        for official_domain in official_domains:
+            if (
+                hostname == official_domain
+                or hostname.endswith("." + official_domain)
+            ):
+                return None
+
+    def normalize_label(value: str) -> str:
+        """Normalize common ASCII leet substitutions."""
+        table = str.maketrans({
+            "0": "o",
+            "1": "l",
+            "3": "e",
+            "4": "a",
+            "5": "s",
+            "7": "t",
+        })
+        return value.translate(table)
+
+    # Compare each hostname label with the brand name.
+    # The final TLD is intentionally ignored.
+    for brand, official_domains in BRAND_DOMAINS.items():
+        for label in hostname.split("."):
+            label_clean = re.sub(r"[^a-z0-9]", "", label)
+            if not label_clean:
+                continue
+
+            normalized_label = normalize_label(label_clean)
+
+            similarity = SequenceMatcher(
+                None,
+                normalized_label,
+                brand,
+            ).ratio()
+
+            # Exact canonical match is legitimate only when the hostname
+            # belongs to one of the official domains, handled above.
+            if similarity >= BRAND_SIMILARITY_THRESHOLD:
+                return Evidence(
+                    code="BRAND_SIMILARITY",
+                    message=f"Hostname похож на бренд «{brand}».",
+                    weight=WEIGHT_BRAND_SIMILARITY,
+                    severity="high",
+                    details={
+                        "brand": brand,
+                        "hostname": hostname,
+                        "similarity": round(similarity, 3),
+                    },
+                )
+
+    return None
+
+
 def analyze(
     url: str,
     *,
     fetch_dns: bool = True,
     dns_timeout: float = 3.0,
     rdap_timeout: float = 5.0,
+    fetch_http: bool = True,
+    http_connect_timeout: float = 5.0,
+    http_read_timeout: float = 10.0,
+    http_overall_timeout: float = 30.0,
+    http_max_redirects: int = 10,
+    allow_private: bool = False,
 ):
-    """Run the currently available analysis pipeline.
+    """Run the complete analysis pipeline."""
 
-    Coverage consists of eight top-level checks defined by the project
-    architecture:
-
-        URL, brand similarity, DNS, RDAP, TLS, HTTP, HTML, reputation
-
-    Only checks that are actually implemented and successfully executed
-    contribute to the completed count.
-    """
     from .dns import lookup_url_dns
+    from .html import analyze_html
+    from .http import fetch_url
     from .models import AnalysisReport, Coverage
     from .rdap import lookup_url_rdap
-    from .scoring import calculate_risk
+    from .reputation import check_reputation
+    from .scoring import (
+        WEIGHT_REPUTATION_MALICIOUS,
+        WEIGHT_REPUTATION_SUSPICIOUS,
+        calculate_risk,
+    )
+    from .tls import check_tls
 
     TOTAL_CHECKS = 8
 
@@ -358,17 +445,21 @@ def analyze(
 
     report.evidence.extend(local_evidence)
 
-    # URL/local analysis is one completed top-level check.
+    # 1. URL
     passed_checks = 1
 
+    # 2. Brand similarity is already part of local_evidence from analyze_url().
+    # Do not append it a second time: one underlying signal must have one
+    # evidence item even though scoring also deduplicates by evidence code.
+    passed_checks += 1
+
+    # 3. DNS
     if fetch_dns:
         dns_report = lookup_url_dns(
             normalized.normalized,
             timeout=dns_timeout,
         )
 
-        # A/AAAA/etc. are details of ONE DNS check.
-        # Transport failures never become phishing evidence.
         dns_success = bool(dns_report.results) and all(
             result.success for result in dns_report.results
         )
@@ -385,6 +476,7 @@ def analyze(
                         f"DNS {result.record_type}: {result.error}"
                     )
 
+        # 4. RDAP
         rdap_report = lookup_url_rdap(
             normalized.normalized,
             timeout=rdap_timeout,
@@ -395,8 +487,133 @@ def analyze(
         elif rdap_report.error:
             report.errors.append(rdap_report.error)
 
+    # 5. TLS
+    #
+    # TLS is meaningful only for HTTPS. For HTTP there is no TLS endpoint
+    # to inspect, so the check remains incomplete rather than becoming
+    # artificial evidence.
+    if normalized.scheme == "https" and fetch_dns and fetch_http:
+        tls_report = check_tls(
+            normalized.hostname_ascii,
+            port=normalized.port or 443,
+            timeout=5.0,
+            allow_private=allow_private,
+        )
+
+        if tls_report.checked:
+            passed_checks += 1
+
+        # TLS failures are transport/coverage information, not
+        # phishing evidence.
+        if tls_report.error:
+            report.errors.append(
+                f"TLS: {tls_report.error}"
+            )
+
+    # 6. HTTP
+    http_report = None
+
+    if fetch_dns and fetch_http:
+        http_report = fetch_url(
+            normalized.normalized,
+            connect_timeout=http_connect_timeout,
+            read_timeout=http_read_timeout,
+            overall_timeout=http_overall_timeout,
+            max_redirects=http_max_redirects,
+            allow_private=allow_private,
+        )
+
+        if http_report.status_code == 429:
+            report.errors.append(
+                "HTTP: сервер вернул 429 Too Many Requests"
+            )
+        elif http_report.checked:
+            passed_checks += 1
+        elif http_report.error:
+            if http_report.blocked:
+                report.errors.append(
+                    f"HTTP/SSRF: {http_report.error}"
+                )
+            else:
+                report.errors.append(http_report.error)
+
+    # 7. HTML
+    #
+    # HTML analysis is strictly static. It is performed only when HTTP
+    # successfully returned a response body.
+    if http_report is not None and http_report.checked:
+        body = getattr(http_report, "body", None)
+
+        if body is None:
+            body = getattr(http_report, "content", None)
+
+        if body:
+            try:
+                html_report = analyze_html(
+                    body,
+                    base_url=normalized.normalized,
+                )
+
+                passed_checks += 1
+
+                for evidence in getattr(
+                    html_report,
+                    "evidence",
+                    (),
+                ):
+                    report.evidence.append(evidence)
+
+                html_error = getattr(html_report, "error", None)
+                if html_error:
+                    report.errors.append(
+                        f"HTML: {html_error}"
+                    )
+
+            except (TypeError, ValueError, UnicodeError) as exc:
+                report.errors.append(f"HTML: {exc}")
+
+    # 8. Reputation
+    #
+    # The current reputation module is a provider placeholder. When no
+    # real provider is configured, this is deliberately incomplete and
+    # does not affect phishing risk.
+    reputation_report = None
+    if fetch_dns and fetch_http:
+        reputation_report = check_reputation(
+            normalized.normalized,
+            timeout=min(http_read_timeout, 10.0),
+        )
+
+    if reputation_report is not None and reputation_report.checked:
+        passed_checks += 1
+        if reputation_report.malicious:
+            report.evidence.append(
+                Evidence(
+                    code="REPUTATION_MALICIOUS",
+                    message="Репутационный сервис сообщил о вредоносной активности для URL.",
+                    weight=WEIGHT_REPUTATION_MALICIOUS,
+                    severity="high",
+                    details={"provider": reputation_report.provider},
+                )
+            )
+        elif reputation_report.suspicious:
+            report.evidence.append(
+                Evidence(
+                    code="REPUTATION_SUSPICIOUS",
+                    message="Репутационный сервис сообщил о подозрительной активности для URL.",
+                    weight=WEIGHT_REPUTATION_SUSPICIOUS,
+                    severity="medium",
+                    details={"provider": reputation_report.provider},
+                )
+            )
+
+    if reputation_report is not None and reputation_report.error and reputation_report.provider:
+        report.errors.append(
+            f"Репутация: {reputation_report.error}"
+        )
+
     report.coverage = Coverage(
-        passed=passed_checks,
+        passed=min(passed_checks, TOTAL_CHECKS),
         total=TOTAL_CHECKS,
     )
 

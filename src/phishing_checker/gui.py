@@ -624,6 +624,13 @@ def run_gui() -> None:
                 url,
                 fetch_dns=True,
                 dns_timeout=3.0,
+                rdap_timeout=5.0,
+                fetch_http=True,
+                http_connect_timeout=5.0,
+                http_read_timeout=10.0,
+                http_overall_timeout=30.0,
+                http_max_redirects=10,
+                allow_private=False,
             )
             root.after(
                 0,

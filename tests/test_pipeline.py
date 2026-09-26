@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from phishing_checker.analyzer import analyze
 from phishing_checker.dns import DNSReport, DNSResult
+from phishing_checker.http import HTTPReport
 from phishing_checker.rdap import RDAPReport
 
 
@@ -16,7 +17,7 @@ def test_no_fetch_runs_local_analysis_only() -> None:
     assert report.risk_score == 0
     assert report.risk_level == "LOW"
 
-    assert report.coverage.passed == 1
+    assert report.coverage.passed == 2
     assert report.coverage.total == 8
     assert report.coverage.status == "PARTIAL"
 
@@ -52,7 +53,7 @@ def test_dns_success_contributes_to_coverage(mock_dns, mock_rdap) -> None:
 
     report = analyze("https://example.com")
 
-    assert report.coverage.passed == 2
+    assert report.coverage.passed == 6
     assert report.coverage.total == 8
     assert report.coverage.status == "PARTIAL"
     assert report.errors == []
@@ -88,7 +89,7 @@ def test_dns_failure_reduces_coverage_without_increasing_risk(mock_dns, mock_rda
 
     report = analyze("https://example.com")
 
-    assert report.coverage.passed == 1
+    assert report.coverage.passed == 5
     assert report.coverage.total == 8
     assert report.coverage.status == "PARTIAL"
 
@@ -131,7 +132,7 @@ def test_local_high_confidence_signal_survives_low_coverage(mock_dns, mock_rdap)
 
     report = analyze("https://192.0.2.10/login")
 
-    assert report.coverage.passed == 1
+    assert report.coverage.passed == 2
     assert report.coverage.total == 8
     assert report.coverage.status == "PARTIAL"
 
@@ -164,9 +165,9 @@ def test_dns_is_called_with_normalized_url(mock_dns, mock_rdap) -> None:
         ),
     )
 
-    report = analyze("пример.рф", fetch_dns=True)
+    report = analyze("пример.рф", fetch_dns=True, fetch_http=False)
 
-    assert report.coverage.passed == 2
+    assert report.coverage.passed == 3
     assert report.coverage.total == 8
 
     mock_dns.assert_called_once()
@@ -199,3 +200,126 @@ def test_report_is_json_serializable() -> None:
     assert data["coverage"]["status"] == "PARTIAL"
     assert isinstance(data["evidence"], list)
     assert isinstance(data["errors"], list)
+
+
+@patch("phishing_checker.http.fetch_url")
+@patch("phishing_checker.rdap.lookup_url_rdap")
+@patch("phishing_checker.dns.lookup_url_dns")
+def test_http_success_contributes_to_coverage(
+    mock_dns,
+    mock_rdap,
+    mock_http,
+) -> None:
+    mock_rdap.return_value = RDAPReport(
+        hostname="example.com",
+        hostname_ascii="example.com",
+        checked=False,
+    )
+
+    mock_dns.return_value = DNSReport(
+        hostname="example.com",
+        hostname_ascii="example.com",
+        results=(
+            DNSResult(
+                record_type="A",
+                answers=("192.0.2.1",),
+                success=True,
+            ),
+        ),
+    )
+
+    mock_http.return_value = HTTPReport(
+        url="https://example.com/",
+        final_url="https://example.com/",
+        status_code=200,
+        checked=True,
+    )
+
+    report = analyze("https://example.com")
+
+    assert report.coverage.passed == 5
+    assert report.coverage.total == 8
+    assert report.errors == []
+    mock_http.assert_called_once()
+
+
+@patch("phishing_checker.http.fetch_url")
+@patch("phishing_checker.rdap.lookup_url_rdap")
+@patch("phishing_checker.dns.lookup_url_dns")
+def test_http_429_does_not_contribute_to_coverage_or_risk(
+    mock_dns,
+    mock_rdap,
+    mock_http,
+) -> None:
+    mock_rdap.return_value = RDAPReport(
+        hostname="example.com",
+        hostname_ascii="example.com",
+        checked=False,
+    )
+
+    mock_dns.return_value = DNSReport(
+        hostname="example.com",
+        hostname_ascii="example.com",
+        results=(
+            DNSResult(
+                record_type="A",
+                answers=("192.0.2.1",),
+                success=True,
+            ),
+        ),
+    )
+
+    mock_http.return_value = HTTPReport(
+        url="https://example.com/",
+        final_url="https://example.com/",
+        status_code=429,
+        checked=True,
+    )
+
+    report = analyze("https://example.com")
+
+    assert report.coverage.passed == 4
+    assert report.coverage.total == 8
+    assert report.risk_score == 0
+    assert report.risk_level == "LOW"
+    assert report.errors == [
+        "HTTP: сервер вернул 429 Too Many Requests"
+    ]
+
+
+@patch("phishing_checker.http.fetch_url")
+@patch("phishing_checker.rdap.lookup_url_rdap")
+@patch("phishing_checker.dns.lookup_url_dns")
+def test_http_ssrf_block_is_error_not_evidence(
+    mock_dns,
+    mock_rdap,
+    mock_http,
+) -> None:
+    mock_rdap.return_value = RDAPReport(
+        hostname="127.0.0.1",
+        hostname_ascii="127.0.0.1",
+        checked=False,
+    )
+
+    mock_dns.return_value = DNSReport(
+        hostname="127.0.0.1",
+        hostname_ascii="127.0.0.1",
+        results=(),
+    )
+
+    mock_http.return_value = HTTPReport(
+        url="http://127.0.0.1/",
+        checked=False,
+        blocked=True,
+        error="Запрос заблокирован: непубличный IP",
+    )
+
+    report = analyze(
+        "http://127.0.0.1/",
+        fetch_dns=True,
+    )
+
+    assert report.coverage.passed == 2
+    assert report.risk_score == 35
+    assert report.errors
+    assert any("HTTP/SSRF:" in error for error in report.errors)

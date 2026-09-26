@@ -14,6 +14,11 @@ import requests
 
 from . import __version__
 from .analyzer import normalize_url
+from .cache import get as cache_get
+from .cache import put as cache_put
+from .network_guard import respect_retry_after, wait_for_request
+
+RDAP_CACHE_TTL = 3600.0
 
 DEFAULT_RDAP_URL = "https://rdap.org/domain/"
 DEFAULT_TIMEOUT = 5.0
@@ -122,6 +127,7 @@ def _request_rdap(
         "User-Agent": f"PhishingChecker/{__version__}",
     }
 
+    wait_for_request(hostname_ascii)
     try:
         response = requests.get(
             url,
@@ -141,6 +147,17 @@ def _request_rdap(
 
     try:
         status_code = response.status_code
+
+        if status_code == 429:
+            respect_retry_after(response.headers.get("Retry-After"))
+            return RDAPReport(
+                hostname=hostname_ascii,
+                hostname_ascii=hostname_ascii,
+                checked=False,
+                status_code=429,
+                error="RDAP 429 Too Many Requests",
+                server=server,
+            )
 
         if status_code == 404:
             return RDAPReport(
@@ -266,11 +283,19 @@ def lookup_rdap(
             server=server,
         )
 
-    return _request_rdap(
+    cache_key = f"{normalized.hostname_ascii}:{server}"
+    cached = cache_get("rdap", cache_key)
+    if cached:
+        return RDAPReport(**cached)
+
+    result = _request_rdap(
         normalized.hostname_ascii,
         timeout=timeout,
         server=server,
     )
+    if result.checked:
+        cache_put("rdap", cache_key, result.to_dict(), RDAP_CACHE_TTL)
+    return result
 
 
 def lookup_url_rdap(
