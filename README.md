@@ -2,6 +2,74 @@
 
 Defensive-инструмент для triage подозрительных URL. Низкий score означает только отсутствие обнаруженных признаков риска и не является гарантией безопасности сайта.
 
+## Быстрый старт (standalone бинарник)
+
+Скачай бинарник со страницы [Releases](https://github.com/sudoZHIK/phishing-checker/releases) — Python не требуется.
+
+**Linux:**
+```bash
+chmod +x PhishingChecker
+./PhishingChecker https://example.com --json
+./PhishingChecker --gui
+```
+
+**Windows:**
+```
+PhishingChecker.exe https://example.com --json
+PhishingChecker.exe --gui
+```
+
+## Быстрый старт (standalone бинарник)
+
+Скачай бинарник со страницы [Releases](https://github.com/sudoZHIK/phishing-checker/releases) — Python не требуется.
+
+**Linux:**
+```bash
+chmod +x PhishingChecker
+./PhishingChecker https://example.com --json
+./PhishingChecker --gui
+```
+
+**Windows:**
+```
+PhishingChecker.exe https://example.com --json
+PhishingChecker.exe --gui
+```
+
+## Быстрый старт (standalone бинарник)
+
+Скачай бинарник со страницы [Releases](https://github.com/sudoZHIK/phishing-checker/releases) — Python не требуется.
+
+**Linux:**
+```bash
+chmod +x PhishingChecker
+./PhishingChecker https://example.com --json
+./PhishingChecker --gui
+```
+
+**Windows:**
+```
+PhishingChecker.exe https://example.com --json
+PhishingChecker.exe --gui
+```
+
+## Быстрый старт (standalone бинарник)
+
+Скачай бинарник со страницы [Releases](https://github.com/sudoZHIK/phishing-checker/releases) — Python не требуется.
+
+**Linux:**
+```bash
+chmod +x PhishingChecker
+./PhishingChecker https://example.com --json
+./PhishingChecker --gui
+```
+
+**Windows:**
+```
+PhishingChecker.exe https://example.com --json
+PhishingChecker.exe --gui
+```
+
 ## Ограничения
 
 Проект работает на Python 3.10+, Linux и Windows. GUI построен на Tkinter/ttk и полностью русскоязычный. JavaScript, crawling, credentials, cookies, session tokens и загруженные программы не выполняются и не отправляются.

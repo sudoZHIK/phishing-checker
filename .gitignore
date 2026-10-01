@@ -42,3 +42,8 @@ Thumbs.db
 
 # All local backup files
 *.bak*
+
+# PyInstaller
+*.spec
+dist/
+build/
