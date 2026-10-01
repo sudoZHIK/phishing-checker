@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: phishing-checker-linux
+            binary: dist/PhishingChecker
+          - os: windows-latest
+            artifact_name: phishing-checker-windows
+            binary: dist/PhishingChecker.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      - name: Install Tk (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y python3-tk
+
+      - name: Build onefile binary
+        run: |
+          pyinstaller --onefile \
+            --name PhishingChecker \
+            --hidden-import=tkinter \
+            --hidden-import=phishing_checker \
+            pyinstaller_gui_entry.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.binary }}
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.binary }}

@@ -23,3 +23,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.4",
+]
