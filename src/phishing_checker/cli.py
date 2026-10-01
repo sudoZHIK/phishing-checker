@@ -97,6 +97,12 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
     )
 
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Запустить графический интерфейс.",
+    )
+
     return parser
 
 
@@ -162,6 +168,11 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.gui:
+        from .gui import run_gui
+        run_gui()
+        return 0
 
     if args.dns_timeout <= 0:
         parser.error("--dns-timeout должен быть больше нуля")
