@@ -5,6 +5,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -37,13 +40,15 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get install -y python3-tk
 
-      - name: Build onefile binary
+      - name: Build onefile binary (Linux)
+        if: runner.os == 'Linux'
         run: |
-          pyinstaller --onefile \
-            --name PhishingChecker \
-            --hidden-import=tkinter \
-            --hidden-import=phishing_checker \
-            pyinstaller_gui_entry.py
+          pyinstaller --onefile --name PhishingChecker --hidden-import=tkinter --hidden-import=phishing_checker pyinstaller_gui_entry.py
+
+      - name: Build onefile binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          pyinstaller --onefile --name PhishingChecker --hidden-import=tkinter --hidden-import=phishing_checker pyinstaller_gui_entry.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -52,7 +57,6 @@ jobs:
           path: ${{ matrix.binary }}
 
       - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.binary }}
