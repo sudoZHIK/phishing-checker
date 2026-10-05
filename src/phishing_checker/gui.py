@@ -418,6 +418,13 @@ def run_gui() -> None:
     )
     details_button.pack(side="left", padx=(8, 0))
 
+    settings_button = ttk.Button(
+        button_frame,
+        text="Настройки",
+        style="Main.TButton",
+    )
+    settings_button.pack(side="left", padx=(8, 0))
+
     copy_button = ttk.Button(
         button_frame,
         text="Копировать",
@@ -433,6 +440,64 @@ def run_gui() -> None:
         state="disabled",
     )
     export_button.pack(side="right", padx=(0, 8))
+
+    # --- Панель настроек (скрыта по умолчанию) ---
+    settings_frame = tk.Frame(
+        main,
+        bg=PANEL,
+        highlightbackground=BORDER,
+        highlightthickness=1,
+    )
+
+    dns_timeout_var = tk.StringVar(value="3.0")
+    rdap_timeout_var = tk.StringVar(value="5.0")
+    connect_timeout_var = tk.StringVar(value="5.0")
+    read_timeout_var = tk.StringVar(value="10.0")
+    overall_timeout_var = tk.StringVar(value="30.0")
+    max_redirects_var = tk.StringVar(value="10")
+
+    def _make_setting_row(parent, label, var):
+        row = tk.Frame(parent, bg=PANEL)
+        row.pack(fill="x", padx=14, pady=3)
+        tk.Label(
+            row, text=label, bg=PANEL, fg=MUTED,
+            font=("DejaVu Sans", 9), width=28, anchor="w",
+        ).pack(side="left")
+        tk.Entry(
+            row, textvariable=var, bg=PANEL2, fg=TEXT,
+            insertbackground=TEXT, relief="flat", bd=1,
+            font=("DejaVu Sans", 9), width=8,
+        ).pack(side="left")
+
+    tk.Label(
+        settings_frame, text="НАСТРОЙКИ СЕТИ",
+        bg=PANEL, fg=ACCENT,
+        font=("DejaVu Sans", 9, "bold"),
+    ).pack(anchor="w", padx=14, pady=(10, 4))
+
+    _make_setting_row(settings_frame, "DNS timeout (сек)", dns_timeout_var)
+    _make_setting_row(settings_frame, "RDAP timeout (сек)", rdap_timeout_var)
+    _make_setting_row(settings_frame, "HTTP connect timeout (сек)", connect_timeout_var)
+    _make_setting_row(settings_frame, "HTTP read timeout (сек)", read_timeout_var)
+    _make_setting_row(settings_frame, "HTTP overall timeout (сек)", overall_timeout_var)
+    _make_setting_row(settings_frame, "HTTP max redirects", max_redirects_var)
+
+    tk.Frame(settings_frame, bg=PANEL, height=8).pack()
+
+    settings_visible = {"value": False}
+
+    def toggle_settings():
+        if settings_visible["value"]:
+            settings_frame.pack_forget()
+            settings_visible["value"] = False
+            settings_button.configure(text="Настройки")
+        else:
+            settings_frame.pack(fill="x", pady=(0, 10))
+            settings_visible["value"] = True
+            settings_button.configure(text="Скрыть настройки")
+
+    settings_button.configure(command=toggle_settings)
+    # --- конец панели настроек ---
 
     progress = ttk.Progressbar(
         main,
@@ -623,13 +688,13 @@ def run_gui() -> None:
             report = analyze(
                 url,
                 fetch_dns=True,
-                dns_timeout=3.0,
-                rdap_timeout=5.0,
+                dns_timeout=float(dns_timeout_var.get()),
+                rdap_timeout=float(rdap_timeout_var.get()),
                 fetch_http=True,
-                http_connect_timeout=5.0,
-                http_read_timeout=10.0,
-                http_overall_timeout=30.0,
-                http_max_redirects=10,
+                http_connect_timeout=float(connect_timeout_var.get()),
+                http_read_timeout=float(read_timeout_var.get()),
+                http_overall_timeout=float(overall_timeout_var.get()),
+                http_max_redirects=int(max_redirects_var.get()),
                 allow_private=False,
             )
             root.after(
