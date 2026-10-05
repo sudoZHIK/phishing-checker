@@ -50,6 +50,18 @@ jobs:
         run: |
           pyinstaller --onefile --name PhishingChecker --hidden-import=tkinter --hidden-import=phishing_checker pyinstaller_gui_entry.py
 
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dist/PhishingChecker --help
+          dist/PhishingChecker https://example.com --no-fetch --json
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          dist\PhishingChecker.exe --help
+          dist\PhishingChecker.exe https://example.com --no-fetch --json
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
