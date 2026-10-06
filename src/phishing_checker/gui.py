@@ -7,6 +7,7 @@ import logging
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from urllib.parse import parse_qsl, urlsplit
 
 from . import __version__
 from .analyzer import analyze
@@ -153,6 +154,29 @@ def _json_text(report: AnalysisReport) -> str:
         ensure_ascii=False,
         indent=2,
     )
+
+
+HISTORY_LIMIT = 20
+
+
+def _mask_url(url: str) -> str:
+    """scheme://host/path?<redacted:N> — без userinfo, query и fragment."""
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return "<некорректный URL>"
+
+    host = parts.netloc.rsplit("@", 1)[-1]
+    if parts.scheme:
+        base = f"{parts.scheme}://{host}{parts.path}"
+    else:
+        base = f"{host}{parts.path}"
+
+    if parts.query:
+        count = len(parse_qsl(parts.query, keep_blank_values=True))
+        base += f"?<redacted:{count}>"
+
+    return base
 
 
 def run_gui() -> None:
@@ -425,6 +449,13 @@ def run_gui() -> None:
     )
     settings_button.pack(side="left", padx=(8, 0))
 
+    history_button = ttk.Button(
+        button_frame,
+        text="История",
+        style="Main.TButton",
+    )
+    history_button.pack(side="left", padx=(8, 0))
+
     copy_button = ttk.Button(
         button_frame,
         text="Копировать",
@@ -498,6 +529,103 @@ def run_gui() -> None:
 
     settings_button.configure(command=toggle_settings)
     # --- конец панели настроек ---
+
+    # --- История проверок (только в памяти, на диск не пишется) ---
+    history: list[tuple[str, str, AnalysisReport]] = []
+
+    history_frame = tk.Frame(
+        main,
+        bg=PANEL,
+        highlightbackground=BORDER,
+        highlightthickness=1,
+    )
+
+    tk.Label(
+        history_frame,
+        text="ИСТОРИЯ ПРОВЕРОК (хранится, пока открыто окно)",
+        bg=PANEL,
+        fg=ACCENT,
+        font=("DejaVu Sans", 9, "bold"),
+    ).pack(anchor="w", padx=14, pady=(10, 4))
+
+    history_list = tk.Listbox(
+        history_frame,
+        height=6,
+        bg=PANEL2,
+        fg=TEXT,
+        selectbackground="#3c5f91",
+        selectforeground=TEXT,
+        relief="flat",
+        bd=0,
+        highlightthickness=0,
+        activestyle="none",
+        exportselection=False,
+        font=("DejaVu Sans Mono", 9),
+    )
+    history_list.pack(fill="x", padx=14, pady=(0, 6))
+
+    def refresh_history() -> None:
+        history_list.delete(0, "end")
+        for label, _full_url, rep in history:
+            history_list.insert(
+                "end",
+                f"{rep.risk_score:>3}  {rep.risk_level:<10} {label}",
+            )
+
+    def add_to_history(url: str, report: AnalysisReport) -> None:
+        if not url:
+            return
+        history.insert(0, (_mask_url(url), url, report))
+        del history[HISTORY_LIMIT:]
+        refresh_history()
+
+    def show_history_item(event=None) -> None:
+        if str(check_button.cget("state")) == "disabled":
+            return
+        selection = history_list.curselection()
+        if not selection:
+            return
+
+        _label, full_url, rep = history[selection[0]]
+        last_report["value"] = rep
+        url_var.set(full_url)
+        set_verdict(rep)
+        set_text(_evidence_text(rep))
+        status_var.set("Показан результат из истории")
+        url_entry.focus_set()
+        url_entry.icursor("end")
+        details_button.configure(state="normal")
+        copy_button.configure(state="normal")
+        export_button.configure(state="normal")
+
+    def clear_history() -> None:
+        history.clear()
+        refresh_history()
+        status_var.set("История очищена")
+
+    ttk.Button(
+        history_frame,
+        text="Очистить историю",
+        style="Main.TButton",
+        command=clear_history,
+    ).pack(anchor="e", padx=14, pady=(0, 10))
+
+    history_list.bind("<<ListboxSelect>>", show_history_item)
+
+    history_visible = {"value": False}
+
+    def toggle_history() -> None:
+        if history_visible["value"]:
+            history_frame.pack_forget()
+            history_visible["value"] = False
+            history_button.configure(text="История")
+        else:
+            history_frame.pack(fill="x", pady=(0, 10), before=result_panel)
+            history_visible["value"] = True
+            history_button.configure(text="Скрыть историю")
+
+    history_button.configure(command=toggle_history)
+    # --- конец истории проверок ---
 
     progress = ttk.Progressbar(
         main,
@@ -653,6 +781,8 @@ def run_gui() -> None:
         clear_button.configure(state="normal")
         paste_button.configure(state="normal")
         url_entry.configure(state="normal")
+        url_entry.focus_set()
+        url_entry.icursor("end")
 
         if error is not None:
             status_var.set("Ошибка проверки")
@@ -674,6 +804,7 @@ def run_gui() -> None:
             return
 
         last_report["value"] = report
+        add_to_history(url_var.get().strip(), report)
 
         status_var.set("Проверка завершена")
         details_button.configure(state="normal")

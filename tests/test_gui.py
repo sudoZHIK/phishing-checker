@@ -183,3 +183,32 @@ def test_worker_passes_all_timeouts():
             "http_overall_timeout", "http_max_redirects", "allow_private",
         }
         assert required.issubset(params), f"Отсутствуют параметры: {required - params}"
+
+
+# ---------------------------------------------------------------------------
+# _mask_url (история проверок)
+# ---------------------------------------------------------------------------
+
+def test_mask_url_hides_query_userinfo_and_fragment():
+    from phishing_checker.gui import _mask_url
+
+    masked = _mask_url("https://user:pw@example.com/a/b?token=1&x=2#frag")
+    assert masked == "https://example.com/a/b?<redacted:2>"
+
+
+def test_mask_url_without_query_is_unchanged():
+    from phishing_checker.gui import _mask_url
+
+    assert _mask_url("https://example.com/path") == "https://example.com/path"
+
+
+def test_mask_url_without_scheme():
+    from phishing_checker.gui import _mask_url
+
+    assert _mask_url("example.com/p?x=1") == "example.com/p?<redacted:1>"
+
+
+def test_mask_url_blank_query_value_counts():
+    from phishing_checker.gui import _mask_url
+
+    assert _mask_url("https://example.com/?flag") == "https://example.com/?<redacted:1>"
