@@ -415,6 +415,7 @@ def analyze(
 ):
     """Run the complete analysis pipeline."""
 
+    from .checks import build_check_results
     from .dns import lookup_url_dns
     from .html import analyze_html
     from .http import fetch_url
@@ -431,11 +432,18 @@ def analyze(
     TOTAL_CHECKS = 8
 
     report = AnalysisReport()
+    checks_log: dict[str, dict] = {}
 
     try:
         normalized, local_evidence = analyze_url(url)
     except (TypeError, ValueError) as exc:
         report.errors.append(str(exc))
+        report.checks = build_check_results(
+            log={},
+            scheme="",
+            url_valid=False,
+            url_error=str(exc),
+        )
         report.coverage = Coverage(0, TOTAL_CHECKS)
         report.risk_score, report.risk_level = calculate_risk(
             report.evidence,
@@ -464,6 +472,17 @@ def analyze(
             result.success for result in dns_report.results
         )
 
+        checks_log["dns"] = {
+            "passed": dns_success,
+            "error": next(
+                (
+                    str(item.error)
+                    for item in dns_report.results
+                    if not item.success and item.error
+                ),
+                None,
+            ),
+        }
         if dns_success:
             passed_checks += 1
         else:
@@ -482,6 +501,10 @@ def analyze(
             timeout=rdap_timeout,
         )
 
+        checks_log["rdap"] = {
+            "passed": bool(rdap_report.checked),
+            "error": rdap_report.error,
+        }
         if rdap_report.checked:
             passed_checks += 1
         elif rdap_report.error:
@@ -500,6 +523,10 @@ def analyze(
             allow_private=allow_private,
         )
 
+        checks_log["tls"] = {
+            "passed": bool(tls_report.checked),
+            "error": tls_report.error,
+        }
         if tls_report.checked:
             passed_checks += 1
 
@@ -523,6 +550,12 @@ def analyze(
             allow_private=allow_private,
         )
 
+        checks_log["http"] = {
+            "passed": bool(http_report.checked)
+            and http_report.status_code != 429,
+            "error": http_report.error,
+            "message": str(http_report.status_code or ""),
+        }
         if http_report.status_code == 429:
             report.errors.append(
                 "HTTP: сервер вернул 429 Too Many Requests"
@@ -554,6 +587,7 @@ def analyze(
                     base_url=normalized.normalized,
                 )
 
+                checks_log["html"] = {"passed": True, "error": None}
                 passed_checks += 1
 
                 for evidence in getattr(
@@ -570,6 +604,7 @@ def analyze(
                     )
 
             except (TypeError, ValueError, UnicodeError) as exc:
+                checks_log["html"] = {"passed": False, "error": str(exc)}
                 report.errors.append(f"HTML: {exc}")
 
     # 8. Reputation
@@ -615,6 +650,11 @@ def analyze(
     report.coverage = Coverage(
         passed=min(passed_checks, TOTAL_CHECKS),
         total=TOTAL_CHECKS,
+    )
+    report.checks = build_check_results(
+        log=checks_log,
+        scheme=normalized.scheme,
+        reputation_report=reputation_report,
     )
 
     report.risk_score, report.risk_level = calculate_risk(

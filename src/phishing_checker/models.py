@@ -86,6 +86,12 @@ class AnalysisReport:
     coverage: Coverage = field(default_factory=lambda: Coverage(0, 0))
     evidence: list[Evidence] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Результаты отдельных проверок для GUI. В JSON (schema 1.0) не входят.
+    checks: list[CheckResult] = field(
+        default_factory=list,
+        compare=False,
+        repr=False,
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
