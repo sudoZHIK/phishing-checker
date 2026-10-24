@@ -1,4 +1,6 @@
-from phishing_checker.gui import run_gui
+import sys
+
+from phishing_checker.launcher import launch
 
 if __name__ == "__main__":
-    run_gui()
+    sys.exit(launch())
