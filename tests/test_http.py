@@ -92,7 +92,9 @@ def test_fetch_private_url_allowed_does_not_fail_for_ssrf_reason(monkeypatch):
 
 
 def test_user_agent_is_project_specific():
-    assert USER_AGENT.startswith("PhishingChecker/0.1.0 ")
+    from phishing_checker import __version__
+
+    assert USER_AGENT.startswith(f"PhishingChecker/{__version__} ")
     assert "+https://" in USER_AGENT
 
 
